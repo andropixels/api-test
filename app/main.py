@@ -324,69 +324,36 @@ async def get_wallet_info(user_id: str):
         print("Creating UserWallet instance...")
         user_wallet = UserWallet(user_id)
         
-        print("Starting agent initialization...")
-        try:
-            agent_executor, config = await user_wallet.initialize_agent()
-            print("Agent initialization successful!")
-        except Exception as agent_error:
-            print(f"Agent initialization failed: {str(agent_error)}")
-            if hasattr(agent_error, '__traceback__'):
-                import traceback
-                print(f"Agent initialization traceback: {traceback.format_exc()}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Agent initialization error: {str(agent_error)}"
-            )
-        
-        print("Getting balance info...")
-        try:
-            balance_info = await asyncio.wait_for(
-                user_wallet.verify_balance(agent_executor, config),
-                timeout=15.0  # Increased timeout
-            )
-            print(f"Balance info received: {balance_info}")
-        except asyncio.TimeoutError:
-            print("Balance verification timed out")
-            raise HTTPException(
-                status_code=504,
-                detail="Balance verification timed out"
-            )
-        except Exception as balance_error:
-            print(f"Balance verification error: {str(balance_error)}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Balance verification failed: {str(balance_error)}"
-            )
-
-        print("Getting wallet address...")
-        address_query = "What is my CDP wallet address?"
-        address = None
-        try:
-            for chunk in agent_executor.stream(
-                {"messages": [HumanMessage(content=address_query)]},
-                config
-            ):
-                if "tools" in chunk:
-                    response = chunk["tools"]["messages"][0].content
-                    print(f"Address response chunk: {response}")
-                    if "0x" in response:
-                        addr = response.split("0x")[1].split()[0].strip(":,")
-                        address = f"0x{addr}"
-                        print(f"Extracted address: {address}")
-        except Exception as addr_error:
-            print(f"Address extraction error: {str(addr_error)}")
-            # Continue execution even if address extraction fails
-        
-        result = {
+        # Add a simple initial response test
+        test_response = {
+            "status": "initializing",
             "user_id": user_id,
-            "address": address,
-            "balance": balance_info,
-            "wallet_file": f"user_wallets/{user_id}_wallet.txt",
-            "is_new_wallet": not os.path.exists(f"user_wallets/{user_id}_wallet.txt"),
             "timestamp": datetime.now().isoformat()
         }
-        print(f"Returning result: {result}")
-        return result
+        print("Sending test response:", test_response)
+        return test_response  # Test if we can even return a basic response
+        
+        # Comment out the rest for testing
+        '''
+        print("Starting agent initialization...")
+        agent_executor, config = await user_wallet.initialize_agent()
+        print("Agent initialization successful!")
+        
+        print("Getting balance info...")
+        balance_info = await user_wallet.verify_balance(agent_executor, config)
+        
+        return {
+            "user_id": user_id,
+            "balance": balance_info,
+            "timestamp": datetime.now().isoformat()
+        }
+        '''
+    except Exception as e:
+        print(f"Error in get_wallet_info: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
         
     except Exception as e:
         print(f"=== ERROR in get_wallet_info ===")
@@ -401,6 +368,10 @@ async def get_wallet_info(user_id: str):
         )
 
 
+@app.get("/test")
+async def test_endpoint():
+    return {"status": "ok", "time": datetime.now().isoformat()}
+    
 @app.middleware("http")
 async def error_handling_middleware(request, call_next):
     try:
