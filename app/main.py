@@ -13,10 +13,25 @@ from langgraph.prebuilt import create_react_agent
 from cdp_langchain.agent_toolkits import CdpToolkit
 from cdp_langchain.utils import CdpAgentkitWrapper
 import json 
+from fastapi.middleware.cors import CORSMiddleware
+
 load_dotenv()
 app = FastAPI()
 
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
+)
 
+@app.get("/")
+async def root():
+    return {"message": "Hello World"}
+
+    
 class FundingRecord(BaseModel):
     user_id: str
     wallet_address: str
