@@ -14,7 +14,11 @@ from cdp_langchain.agent_toolkits import CdpToolkit
 from cdp_langchain.utils import CdpAgentkitWrapper
 import json 
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+import logging
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 load_dotenv()
 app = FastAPI()
 
@@ -31,7 +35,7 @@ app.add_middleware(
 async def root():
     return {"message": "Hello World"}
 
-    
+
 class FundingRecord(BaseModel):
     user_id: str
     wallet_address: str
@@ -315,27 +319,65 @@ async def batch_swap(swap_request: SwapRequest):
 @app.get("/api/wallet/{user_id}")
 async def get_wallet_info(user_id: str):
     """Get wallet information"""
+    print(f"=== Starting get_wallet_info for user_id: {user_id} ===")
     try:
+        print("Creating UserWallet instance...")
         user_wallet = UserWallet(user_id)
-        agent_executor, config = await user_wallet.initialize_agent()
         
-        # Get balance
-        balance_info = await user_wallet.verify_balance(agent_executor, config)
+        print("Starting agent initialization...")
+        try:
+            agent_executor, config = await user_wallet.initialize_agent()
+            print("Agent initialization successful!")
+        except Exception as agent_error:
+            print(f"Agent initialization failed: {str(agent_error)}")
+            if hasattr(agent_error, '__traceback__'):
+                import traceback
+                print(f"Agent initialization traceback: {traceback.format_exc()}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Agent initialization error: {str(agent_error)}"
+            )
         
-        # Get address
+        print("Getting balance info...")
+        try:
+            balance_info = await asyncio.wait_for(
+                user_wallet.verify_balance(agent_executor, config),
+                timeout=15.0  # Increased timeout
+            )
+            print(f"Balance info received: {balance_info}")
+        except asyncio.TimeoutError:
+            print("Balance verification timed out")
+            raise HTTPException(
+                status_code=504,
+                detail="Balance verification timed out"
+            )
+        except Exception as balance_error:
+            print(f"Balance verification error: {str(balance_error)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Balance verification failed: {str(balance_error)}"
+            )
+
+        print("Getting wallet address...")
         address_query = "What is my CDP wallet address?"
         address = None
-        for chunk in agent_executor.stream(
-            {"messages": [HumanMessage(content=address_query)]},
-            config
-        ):
-            if "tools" in chunk:
-                response = chunk["tools"]["messages"][0].content
-                if "0x" in response:
-                    addr = response.split("0x")[1].split()[0].strip(":,")
-                    address = f"0x{addr}"
+        try:
+            for chunk in agent_executor.stream(
+                {"messages": [HumanMessage(content=address_query)]},
+                config
+            ):
+                if "tools" in chunk:
+                    response = chunk["tools"]["messages"][0].content
+                    print(f"Address response chunk: {response}")
+                    if "0x" in response:
+                        addr = response.split("0x")[1].split()[0].strip(":,")
+                        address = f"0x{addr}"
+                        print(f"Extracted address: {address}")
+        except Exception as addr_error:
+            print(f"Address extraction error: {str(addr_error)}")
+            # Continue execution even if address extraction fails
         
-        return {
+        result = {
             "user_id": user_id,
             "address": address,
             "balance": balance_info,
@@ -343,11 +385,37 @@ async def get_wallet_info(user_id: str):
             "is_new_wallet": not os.path.exists(f"user_wallets/{user_id}_wallet.txt"),
             "timestamp": datetime.now().isoformat()
         }
+        print(f"Returning result: {result}")
+        return result
         
     except Exception as e:
+        print(f"=== ERROR in get_wallet_info ===")
+        print(f"Error type: {type(e)}")
+        print(f"Error message: {str(e)}")
+        if hasattr(e, '__traceback__'):
+            import traceback
+            print(f"Full traceback: {traceback.format_exc()}")
         raise HTTPException(
             status_code=500,
             detail=str(e)
+        )
+
+
+@app.middleware("http")
+async def error_handling_middleware(request, call_next):
+    try:
+        response = await call_next(request)
+        return response
+    except Exception as e:
+        print(f"=== Unhandled error in middleware ===")
+        print(f"Error type: {type(e)}")
+        print(f"Error message: {str(e)}")
+        if hasattr(e, '__traceback__'):
+            import traceback
+            print(f"Middleware traceback: {traceback.format_exc()}")
+        return JSONResponse(
+            status_code=500,
+            content={"detail": str(e)}
         )
 
 if __name__ == "__main__":
